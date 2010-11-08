@@ -1,0 +1,5 @@
+nodejs-redis (0.3.6) unstable; urgency=low
+
+  * Debianized
+
+ -- Seth Fitzsimmons <seth@simplegeo.com>  Mon, 8 Nov 2010 14:16:59 -0700
