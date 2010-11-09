@@ -435,6 +435,10 @@ function RedisClient(stream) {
         self.connection_gone("end");
     });
     
+    this.stream.on("drain", function () {
+        self.emit("drain");
+    });
+
     events.EventEmitter.call(this);
 }
 util.inherits(RedisClient, events.EventEmitter);
@@ -505,6 +509,10 @@ RedisClient.prototype.on_data = function (data) {
 RedisClient.prototype.return_error = function (err) {
     var command_obj = this.command_queue.shift();
 
+    if (this.subscriptions === false && this.command_queue.length === 0) {
+        this.emit("idle");
+    }
+    
     if (command_obj && typeof command_obj.callback === "function") {
         command_obj.callback(err);
     } else {
@@ -517,6 +525,10 @@ RedisClient.prototype.return_error = function (err) {
 RedisClient.prototype.return_reply = function (reply) {
     var command_obj = this.command_queue.shift(),
         obj, i, len, key, val, type;
+
+    if (this.subscriptions === false && this.command_queue.length === 0) {
+        this.emit("idle");
+    }
     
     if (command_obj) {
         if (typeof command_obj.callback === "function") {
@@ -622,6 +634,7 @@ RedisClient.prototype.send_command = function () {
     buffer_args = false;
 
     elem_count += args.length;
+    // Probably should just scan this like a normal person
     buffer_args = args.some(function (arg) {
         // this is clever, but might be slow
         return arg instanceof Buffer;
@@ -631,6 +644,11 @@ RedisClient.prototype.send_command = function () {
     // This means that using Buffers in commands is going to be slower, so use Strings if you don't need binary.
 
     command_str = "*" + elem_count + "\r\n$" + command.length + "\r\n" + command + "\r\n";
+
+    if (! stream.writable && exports.debug_mode) {
+        console.log("send command: stream is not writeable, should get a close event next tick.");
+        return;
+    }
     
     if (! buffer_args) { // Build up a string and send entire command in one write
         for (i = 0, il = args.length, arg; i < il; i += 1) {
@@ -643,7 +661,6 @@ RedisClient.prototype.send_command = function () {
         if (exports.debug_mode) {
             console.log("send command: " + command_str);
         }
-        // Need to catch "Stream is not writable" exception here and error everybody in the command queue out
         stream.write(command_str);
     } else {
         if (exports.debug_mode) {
