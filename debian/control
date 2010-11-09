@@ -7,7 +7,7 @@ build-Depends: cdbs, debhelper (>= 7)
 Standards-Version: 3.9.1
 
 Package: nodejs-redis
-Depends: nodejs (>= 0.2.3), ${misc:Depends}
+Depends: nodejs (>= 0.2.0), ${misc:Depends}
 Architecture: all
 Description: Redis client library
- http://github.com/simplegeo/node_redis
+ https://github.com/mranney/node_redis
