@@ -1,3 +1,12 @@
+nodejs-redis (0.5.11-0sg58) UNRELEASED; urgency=low
+
+  [ Paul Lathrop ]
+  * Update packaging to install ALL the .js files.
+
+  [ SimpleGeo Nerds ]
+
+ -- SimpleGeo Nerds <nerds@simplegeo.com>  Tue, 09 Aug 2011 22:06:52 +0000
+
 nodejs-redis (0.5.11-0sg57) UNRELEASED; urgency=low
 
   * UNRELEASED
