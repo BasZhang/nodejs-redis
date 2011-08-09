@@ -3,19 +3,16 @@ var redis = require("./index"),
     client = redis.createClient(),
     client2 = redis.createClient(),
     client3 = redis.createClient(),
+    client4 = redis.createClient(9006, "filefish.redistogo.com"),
     assert = require("assert"),
-    util,
+    util = require("./lib/util").util,
     test_db_num = 15, // this DB will be flushed and used for testing
-    tests = {};
+    tests = {},
+    connected = false,
+    ended = false;
 
-try {
-    util = require("util");
-} catch (err) {
-    util = require("sys");
-}
-
-// Uncomment this to see the wire protocol and other debugging info
-//redis.debug_mode = true;
+// Set this to truthy to see the wire protocol and other debugging info
+redis.debug_mode = process.argv[2];
 
 function buffers_to_strings(arr) {
     return arr.map(function (val) {
@@ -56,11 +53,23 @@ function require_string(str, label) {
     };
 }
 
+function require_null(label) {
+    return function (err, results) {
+        assert.strictEqual(null, err, "result sent back unexpected error: " + err);
+        assert.strictEqual(null, results, label + ": " + results + " is not null");
+        return true;
+    };
+}
+
 function require_error(label) {
     return function (err, results) {
         assert.notEqual(err, null, label + " err is null, but an error is expected here.");
         return true;
     };
+}
+
+function is_empty_array(obj) { 
+    return Array.isArray(obj) && obj.length === 0;
 }
 
 function last(name, fn) {
@@ -140,8 +149,15 @@ tests.MULTI_3 = function () {
     client.sadd("some set", "mem 2");
     client.sadd("some set", "mem 3");
     client.sadd("some set", "mem 4");
+
+    // make sure empty mb reply works
+    client.del("some missing set");
+    client.smembers("some missing set", function (err, reply) {
+        // make sure empty mb reply works
+        assert.strictEqual(true, is_empty_array(reply), name);
+    });
  
-    // test nested multi-bulk replies with nulls.
+    // test nested multi-bulk replies with empty mb elements.
     client.multi([
         ["smembers", "some set"],
         ["del", "some set"],
@@ -149,7 +165,7 @@ tests.MULTI_3 = function () {
     ])
     .scard("some set")
     .exec(function (err, replies) {
-        assert.strictEqual(replies[2][0], null, name);
+        assert.strictEqual(true, is_empty_array(replies[2]), name);
         next(name);
     });
 };
@@ -193,15 +209,60 @@ tests.MULTI_6 = function () {
 
     client.multi()
         .hmset("multihash", "a", "foo", "b", 1)
+        .hmset("multihash", {
+            extra: "fancy",
+            things: "here"
+        })
         .hgetall("multihash")
         .exec(function (err, replies) {
             assert.strictEqual(null, err);
             assert.equal("OK", replies[0]);
-            assert.equal(Object.keys(replies[1]).length, 2);
-            assert.equal("foo", replies[1].a.toString());
-            assert.equal("1", replies[1].b.toString());
+            assert.equal(Object.keys(replies[2]).length, 4);
+            assert.equal("foo", replies[2].a);
+            assert.equal("1", replies[2].b);
+            assert.equal("fancy", replies[2].extra);
+            assert.equal("here", replies[2].things);
             next(name);
         });
+};
+
+tests.WATCH_MULTI = function () {
+  var name = 'WATCH_MULTI';
+
+  if (client.server_info.versions[0] >= 2 && client.server_info.versions[1] >= 1) {
+      client.watch(name);
+      client.incr(name);
+      var multi = client.multi();
+      multi.incr(name);
+      multi.exec(last(name, require_null(name)));
+  } else {
+      console.log("Skipping " + name + " because server version isn't new enough.");
+      next(name);
+  }
+};
+
+tests.reconnect = function () {
+    var name = "reconnect";
+
+    client.set("recon 1", "one");
+    client.set("recon 2", "two", function (err, res) {
+        // Do not do this in normal programs. This is to simulate the server closing on us.
+        // For orderly shutdown in normal programs, do client.quit()
+        client.stream.destroy();
+    });
+    
+    client.on("reconnecting", function on_recon(params) {
+        client.on("connect", function on_connect() {
+            client.select(test_db_num, require_string("OK", name));
+            client.get("recon 1", require_string("one", name));
+            client.get("recon 1", require_string("one", name));
+            client.get("recon 2", require_string("two", name));
+            client.get("recon 2", require_string("two", name));
+            client.removeListener("connect", on_connect);
+            client.removeListener("reconnecting", on_recon);
+            next(name);
+        });
+    });
 };
 
 tests.HSET = function () {
@@ -224,17 +285,41 @@ tests.HSET = function () {
     client.HSET(key, field2, value2, last(name, require_number(0, name)));
 };
 
+tests.HMSET_BUFFER_AND_ARRAY = function () {
+    // Saving a buffer and an array to the same document should not error
+    var key = "test hash",
+        field1 = "buffer",
+        value1 = new Buffer("abcdefghij"),
+        field2 = "array",
+        value2 = [],
+        name = "HSET";
+
+    client.HMSET(key, field1, value1, field2, value2, last(name, require_string("OK", name)));
+};
+
 tests.HMGET = function () {
-    var key = "test hash", name = "HMGET";
+    var key1 = "test hash 1", key2 = "test hash 2", name = "HMGET";
 
-    client.HMSET(key, "0123456789", "abcdefghij", "some manner of key", "a type of value", require_string("OK", name));
+    // redis-like hmset syntax
+    client.HMSET(key1, "0123456789", "abcdefghij", "some manner of key", "a type of value", require_string("OK", name));
 
-    client.HMGET(key, "0123456789", "some manner of key", function (err, reply) {
+    // fancy hmset syntax
+    client.HMSET(key2, {
+        "0123456789": "abcdefghij",
+        "some manner of key": "a type of value"
+    }, require_string("OK", name));
+
+    client.HMGET(key1, "0123456789", "some manner of key", function (err, reply) {
+        assert.strictEqual("abcdefghij", reply[0].toString(), name);
+        assert.strictEqual("a type of value", reply[1].toString(), name);
+    });
+
+    client.HMGET(key2, "0123456789", "some manner of key", function (err, reply) {
         assert.strictEqual("abcdefghij", reply[0].toString(), name);
         assert.strictEqual("a type of value", reply[1].toString(), name);
     });
     
-    client.HMGET(key, "missing thing", "another missing thing", function (err, reply) {
+    client.HMGET(key1, "missing thing", "another missing thing", function (err, reply) {
         assert.strictEqual(null, reply[0], name);
         assert.strictEqual(null, reply[1], name);
         next(name);
@@ -340,7 +425,7 @@ tests.MULTIBULK_ZERO_LENGTH = function () {
     var name = "MULTIBULK_ZERO_LENGTH";
     client.KEYS(['users:*'], function (err, results) {
         assert.strictEqual(null, err, 'error on empty multibulk reply');
-        assert.strictEqual(null, results);
+        assert.strictEqual(true, is_empty_array(results), "not an empty array");
         next(name);
     });
 };
@@ -455,7 +540,7 @@ tests.HGETALL = function () {
     client.HGETALL(["hosts"], function (err, obj) {
         assert.strictEqual(null, err, name + " result sent back unexpected error: " + err);
         assert.strictEqual(3, Object.keys(obj).length, name);
-        assert.ok(Buffer.isBuffer(obj.mjr), name);
+//        assert.ok(Buffer.isBuffer(obj.mjr), name);
         assert.strictEqual("1", obj.mjr.toString(), name);
         assert.strictEqual("23", obj.another.toString(), name);
         assert.strictEqual("1234", obj.home.toString(), name);
@@ -468,7 +553,7 @@ tests.HGETALL_NULL = function () {
 
     client.hgetall('missing', function (err, obj) {
         assert.strictEqual(null, err);
-        assert.strictEqual(null, obj);
+        assert.deepEqual([], obj);
         next(name);
     });
 };
@@ -480,7 +565,7 @@ tests.UTF8 = function () {
     client.set(["utf8test", utf8_sample], require_string("OK", name));
     client.get(["utf8test"], function (err, obj) {
         assert.strictEqual(null, err);
-        assert.strictEqual(utf8_sample, obj.toString('utf8'));
+        assert.strictEqual(utf8_sample, obj);
         next(name);
     });
 };
@@ -976,19 +1061,31 @@ function run_next_test() {
         console.log('\n  completed \x1b[32m%d\x1b[0m tests in \x1b[33m%d\x1b[0m ms\n', test_count, new Date() - all_start);
         client.quit();
         client2.quit();
+        client4.quit();
     }
 }
 
-var connected = false;
-var ended = false;
-client.on("connect", function () {
-    connected = true;
-    console.log();
+console.log("Using reply parser " + client.reply_parser.name);
+
+client.once("ready", function start_tests() {
+    console.log("Connected to " + client.host + ":" + client.port + ", Redis server version " + client.server_info.redis_version + "\n");
+
     run_next_test();
+
+    connected = true;
 });
 
 client.on('end', function () {
   ended = true;
+});
+
+// TODO - need a better way to test auth, maybe auto-config a local Redis server?  Sounds hard.
+// Yes, this is the real password.  Please be nice, thanks.
+client4.auth("664b1b6aaf134e1ec281945a8de702a9", function (err, res) {
+    if (err) {
+        assert.fail(err, name);
+    }
+    assert.strictEqual("OK", res.toString(), "auth");
 });
 
 // Exit immediately on connection failure, which triggers "exit", below, which fails the test
@@ -1005,8 +1102,8 @@ client3.on("error", function (err) {
     process.exit();
 });
 
-client.on("reconnecting", function (msg) {
-    console.log("reconnecting: " + msg);
+client.on("reconnecting", function (params) {
+//    console.log("reconnecting: " + util.inspect(params));
 });
 
 process.on('uncaughtException', function (err) {
