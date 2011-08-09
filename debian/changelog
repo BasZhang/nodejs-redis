@@ -1,3 +1,9 @@
+nodejs-redis (0.5.11-0sg56) unstable; urgency=low
+
+  * Update to latest upstream version.
+
+ -- Paul Lathrop <paul@simplegeo.com>  Tue, 09 Aug 2011 02:50:42 -0700
+
 nodejs-redis (0.3.7-0sg55) UNRELEASED; urgency=low
 
   * UNRELEASED
