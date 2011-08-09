@@ -1,1 +1,3 @@
 index.js usr/lib/nodejs/redis
+lib/queue.js lib/util.js usr/lib/nodejs/redis/lib
+lib/parser/hiredis.js lib/parser/javascript.js usr/lib/nodejs/redis/lib/parser
