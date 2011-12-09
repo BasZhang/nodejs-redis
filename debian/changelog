@@ -1,3 +1,9 @@
+nodejs-redis (0.5.11-0sg59) UNRELEASED; urgency=low
+
+  * UNRELEASED
+
+ -- SimpleGeo Nerds <nerds@simplegeo.com>  Fri, 09 Dec 2011 01:02:50 +0000
+
 nodejs-redis (0.5.11-0sg58) UNRELEASED; urgency=low
 
   [ Paul Lathrop ]
